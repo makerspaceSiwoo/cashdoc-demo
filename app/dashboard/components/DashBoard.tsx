@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useMemo,
-  useState,
-  useEffect,
-  useRef,
-} from "react";
+import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -78,18 +72,30 @@ function buildEventRecords(
   hospitalId: string,
   year: number,
   month: number,
-  baseMultiplier: number
+  baseMultiplier: number,
 ): EventRecord[] {
   const seed = (hospitalId.charCodeAt(0) + year * 12 + month) % 100;
-  return EVENT_NAMES.map((eventName, i) => {
-    const d = 50 + (seed + i * 7) % 150;
+
+  // 각 월마다 2~3개의 이벤트만 선택 (데모용으로 데이터 양 축소)
+  const count = 2 + (seed % 2); // 2 또는 3
+  const indices: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const idx = (seed + i * 3) % EVENT_NAMES.length;
+    if (!indices.includes(idx)) {
+      indices.push(idx);
+    }
+  }
+
+  return indices.map((idx) => {
+    const eventName = EVENT_NAMES[idx];
+    const d = 50 + ((seed + idx * 7) % 150);
     const b = Math.floor(d * (0.03 + (seed % 15) / 100));
     const v = Math.floor(b * (0.6 + (seed % 10) / 100));
     const delivery = Math.round(d * baseMultiplier);
     const booking = Math.round(b * baseMultiplier);
     const visit = Math.round(v * baseMultiplier);
     const bookingRate = delivery > 0 ? (booking / delivery) * 100 : 0;
-    const visitRate = booking > 0 ? (visit / booking) * 100 : 0;
+    const visitRate = delivery > 0 ? (visit / delivery) * 100 : 0;
     return {
       year,
       month,
@@ -142,7 +148,14 @@ const MOCK_HOSPITALS: Hospital[] = [
 ];
 
 function getMockEventData(hospitalId: string): EventRecord[] {
-  const mult = hospitalId === "A" ? 1.2 : hospitalId === "B" ? 1 : hospitalId === "C" ? 0.8 : 1.1;
+  const mult =
+    hospitalId === "A"
+      ? 1.2
+      : hospitalId === "B"
+        ? 1
+        : hospitalId === "C"
+          ? 0.8
+          : 1.1;
   const records: EventRecord[] = [];
   for (const year of [2024, 2025]) {
     for (let month = 1; month <= 12; month++) {
@@ -189,13 +202,13 @@ function buildTableRows(records: EventRecord[]): TableRow[] {
     if (y !== currentYear && currentYear !== 0) {
       rows.push({
         kind: "yearlyTotal",
-        eventName: `${currentYear}년 합계`,
+        year: currentYear,
+        eventName: `${currentYear}년 소계`,
         delivery: yearDelivery,
         booking: yearBooking,
         visit: yearVisit,
-        bookingRate:
-          yearDelivery > 0 ? (yearBooking / yearDelivery) * 100 : 0,
-        visitRate: yearBooking > 0 ? (yearVisit / yearBooking) * 100 : 0,
+        bookingRate: yearDelivery > 0 ? (yearBooking / yearDelivery) * 100 : 0,
+        visitRate: yearDelivery > 0 ? (yearVisit / yearDelivery) * 100 : 0,
       });
       yearDelivery = yearBooking = yearVisit = 0;
     }
@@ -222,18 +235,19 @@ function buildTableRows(records: EventRecord[]): TableRow[] {
       booking: monthBooking,
       visit: monthVisit,
       bookingRate: monthDelivery > 0 ? (monthBooking / monthDelivery) * 100 : 0,
-      visitRate: monthBooking > 0 ? (monthVisit / monthBooking) * 100 : 0,
+      visitRate: monthDelivery > 0 ? (monthVisit / monthDelivery) * 100 : 0,
     });
   }
   if (currentYear !== 0) {
     rows.push({
       kind: "yearlyTotal",
-      eventName: `${currentYear}년 합계`,
+      year: currentYear,
+      eventName: `${currentYear}년 소계`,
       delivery: yearDelivery,
       booking: yearBooking,
       visit: yearVisit,
       bookingRate: yearDelivery > 0 ? (yearBooking / yearDelivery) * 100 : 0,
-      visitRate: yearBooking > 0 ? (yearVisit / yearBooking) * 100 : 0,
+      visitRate: yearDelivery > 0 ? (yearVisit / yearDelivery) * 100 : 0,
     });
   }
   return rows;
@@ -268,19 +282,23 @@ function loadRecent(): string[] {
 
 export default function DashBoard() {
   const [hospitals, setHospitals] = useState<Hospital[]>(() =>
-    MOCK_HOSPITALS.map((h) => ({ ...h, favorite: loadFavorites().has(h.id) }))
+    MOCK_HOSPITALS.map((h) => ({ ...h, favorite: loadFavorites().has(h.id) })),
   );
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedHospital, setSelectedHospital] = useState<Hospital | null>(null);
+  const [selectedHospital, setSelectedHospital] = useState<Hospital | null>(
+    null,
+  );
   const [startYear, setStartYear] = useState(2024);
   const [startMonth, setStartMonth] = useState(1);
   const [endYear, setEndYear] = useState(2025);
   const [endMonth, setEndMonth] = useState(12);
-  const [eventFilter, setEventFilter] = useState<string[]>([]);
-  const [serviceTypeFilter, setServiceTypeFilter] = useState<ServiceType>("all");
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
+  const [serviceTypeFilter, setServiceTypeFilter] =
+    useState<ServiceType>("all");
   const [filterOpen, setFilterOpen] = useState(false);
   const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<HTMLDivElement>(null);
 
@@ -288,16 +306,22 @@ export default function DashBoard() {
 
   const filteredHospitals = useMemo(() => {
     if (!debouncedQuery.trim())
-      return hospitals.map((h) => ({ ...h, display: `${h.name} | ${h.subject} | ${h.location}` }));
+      return hospitals.map((h) => ({
+        ...h,
+        display: `${h.name} | ${h.subject} | ${h.location}`,
+      }));
     const q = debouncedQuery.toLowerCase();
     return hospitals
       .filter(
         (h) =>
           h.name.toLowerCase().includes(q) ||
           h.subject.toLowerCase().includes(q) ||
-          h.location.toLowerCase().includes(q)
+          h.location.toLowerCase().includes(q),
       )
-      .map((h) => ({ ...h, display: `${h.name} | ${h.subject} | ${h.location}` }));
+      .map((h) => ({
+        ...h,
+        display: `${h.name} | ${h.subject} | ${h.location}`,
+      }));
   }, [hospitals, debouncedQuery]);
 
   const allEventData = useMemo(() => {
@@ -308,27 +332,48 @@ export default function DashBoard() {
   const filteredRecords = useMemo(() => {
     return allEventData.filter((r) => {
       const inRange =
-        (r.year > startYear || (r.year === startYear && r.month >= startMonth)) &&
+        (r.year > startYear ||
+          (r.year === startYear && r.month >= startMonth)) &&
         (r.year < endYear || (r.year === endYear && r.month <= endMonth));
       if (!inRange) return false;
-      if (eventFilter.length > 0 && !eventFilter.includes(r.eventName)) return false;
+      if (selectedEvent && r.eventName !== selectedEvent) return false;
       return true;
     });
-  }, [allEventData, startYear, startMonth, endYear, endMonth, eventFilter]);
+  }, [allEventData, startYear, startMonth, endYear, endMonth, selectedEvent]);
 
-  const tableRows = useMemo(() => buildTableRows(filteredRecords), [filteredRecords]);
+  const tableRows = useMemo(
+    () => buildTableRows(filteredRecords),
+    [filteredRecords],
+  );
 
   const summary = useMemo(() => {
-    const totalDelivery = filteredRecords.reduce((s: number, r: EventRecord) => s + r.delivery, 0);
-    const totalBooking = filteredRecords.reduce((s: number, r: EventRecord) => s + r.booking, 0);
-    const totalVisit = filteredRecords.reduce((s: number, r: EventRecord) => s + r.visit, 0);
+    const totalDelivery = filteredRecords.reduce(
+      (s: number, r: EventRecord) => s + r.delivery,
+      0,
+    );
+    const totalBooking = filteredRecords.reduce(
+      (s: number, r: EventRecord) => s + r.booking,
+      0,
+    );
+    const totalVisit = filteredRecords.reduce(
+      (s: number, r: EventRecord) => s + r.visit,
+      0,
+    );
     const count = filteredRecords.length;
-    const avgBookingRate = count > 0
-      ? filteredRecords.reduce((s: number, r: EventRecord) => s + r.bookingRate, 0) / count
-      : 0;
-    const avgVisitRate = count > 0
-      ? filteredRecords.reduce((s: number, r: EventRecord) => s + r.visitRate, 0) / count
-      : 0;
+    const avgBookingRate =
+      count > 0
+        ? filteredRecords.reduce(
+            (s: number, r: EventRecord) => s + r.bookingRate,
+            0,
+          ) / count
+        : 0;
+    const avgVisitRate =
+      count > 0
+        ? filteredRecords.reduce(
+            (s: number, r: EventRecord) => s + r.visitRate,
+            0,
+          ) / count
+        : 0;
     return {
       totalDelivery,
       totalBooking,
@@ -340,15 +385,78 @@ export default function DashBoard() {
 
   const hospitalsForAutocomplete = useMemo(() => {
     let list = filteredHospitals;
-    if (serviceTypeFilter === "paid") list = list.filter((h: Hospital & { display: string }) => h.serviceType === "paid");
-    else if (serviceTypeFilter === "free") list = list.filter((h: Hospital & { display: string }) => h.serviceType === "free");
+    if (serviceTypeFilter === "paid")
+      list = list.filter(
+        (h: Hospital & { display: string }) => h.serviceType === "paid",
+      );
+    else if (serviceTypeFilter === "free")
+      list = list.filter(
+        (h: Hospital & { display: string }) => h.serviceType === "free",
+      );
     return list;
   }, [filteredHospitals, serviceTypeFilter]);
 
+  const hasDateFilter = !(
+    startYear === 2024 &&
+    startMonth === 1 &&
+    endYear === 2025 &&
+    endMonth === 12
+  );
+  const hasEventFilter = selectedEvent !== null;
+  const hasServiceFilter = serviceTypeFilter !== "all";
+
+  const activeFilterLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (hasDateFilter) {
+      const sm = String(startMonth).padStart(2, "0");
+      const em = String(endMonth).padStart(2, "0");
+      parts.push(`${startYear}.${sm}~${endYear}.${em}`);
+    }
+    if (hasEventFilter) {
+      parts.push(`이벤트: ${selectedEvent}`);
+    }
+    if (hasServiceFilter) {
+      parts.push(serviceTypeFilter === "paid" ? "유료만" : "무료만");
+    }
+    return parts.join(" / ");
+  }, [
+    hasDateFilter,
+    hasEventFilter,
+    hasServiceFilter,
+    startYear,
+    startMonth,
+    endYear,
+    endMonth,
+    selectedEvent,
+    serviceTypeFilter,
+  ]);
+
+  const hasActiveFilters = activeFilterLabel.length > 0;
+
+  const handleResetFilters = useCallback(() => {
+    setStartYear(2024);
+    setStartMonth(1);
+    setEndYear(2025);
+    setEndMonth(12);
+    setSelectedEvent(null);
+    setServiceTypeFilter("all");
+    setHasSearched(false);
+  }, []);
+
+  const handleSearch = useCallback(() => {
+    if (selectedHospital) {
+      setHasSearched(true);
+    }
+  }, [selectedHospital]);
+
   const toggleFavorite = useCallback((id: string) => {
     setHospitals((prev: Hospital[]) => {
-      const next = prev.map((h: Hospital) => (h.id === id ? { ...h, favorite: !h.favorite } : h));
-      const fav = new Set(next.filter((h: Hospital) => h.favorite).map((h: Hospital) => h.id));
+      const next = prev.map((h: Hospital) =>
+        h.id === id ? { ...h, favorite: !h.favorite } : h,
+      );
+      const fav = new Set(
+        next.filter((h: Hospital) => h.favorite).map((h: Hospital) => h.id),
+      );
       try {
         localStorage.setItem(STORAGE_FAVORITES, JSON.stringify([...fav]));
       } catch {}
@@ -358,6 +466,7 @@ export default function DashBoard() {
 
   const selectHospital = useCallback((h: Hospital): void => {
     setSelectedHospital(h);
+    setHasSearched(false);
     setAutocompleteOpen(false);
     setSearchQuery("");
     try {
@@ -377,7 +486,10 @@ export default function DashBoard() {
       ) {
         setAutocompleteOpen(false);
       }
-      if (eventDropdownOpen && !(e.target as HTMLElement).closest("[data-event-dropdown]")) {
+      if (
+        eventDropdownOpen &&
+        !(e.target as HTMLElement).closest("[data-event-dropdown]")
+      ) {
         setEventDropdownOpen(false);
       }
     }
@@ -391,119 +503,142 @@ export default function DashBoard() {
     .filter(Boolean) as Hospital[];
   const favoriteHospitals = hospitals.filter((h: Hospital) => h.favorite);
 
-  const noResults =
-    (debouncedQuery.trim() && hospitalsForAutocomplete.length === 0) ||
-    (selectedHospital && tableRows.length === 0);
+  const noResults = !!selectedHospital && hasSearched && tableRows.length === 0;
 
   return (
     <div className="space-y-6">
-      {/* Search & Autocomplete */}
-      <div className="relative" ref={autocompleteRef}>
-        <div className="relative flex">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="병원 검색 (이름 | 진료과 | 지역)"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setAutocompleteOpen(true);
-            }}
-            onFocus={() => setAutocompleteOpen(true)}
-            className="w-full rounded-lg border border-input bg-background py-2.5 pl-10 pr-4 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <AnimatePresence>
-          {autocompleteOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              className="absolute top-full z-50 mt-1 max-h-72 w-full overflow-auto rounded-lg border bg-popover shadow-lg"
-            >
-              {!debouncedQuery.trim() ? (
-                <div className="p-3 space-y-2">
-                  {favoriteHospitals.length > 0 && (
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-1">즐겨찾기</p>
-                      {favoriteHospitals.map((h: Hospital) => (
-                        <button
-                          key={h.id}
-                          type="button"
-                          onClick={() => selectHospital(h)}
-                          className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-accent"
-                        >
-                          <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                          <Building2 className="h-4 w-4 text-muted-foreground" />
-                          <span>{h.name} | {h.subject} | {h.location}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {recentHospitals.length > 0 && (
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-1">최근 검색</p>
-                      {recentHospitals.map((h: Hospital) => (
-                        <button
-                          key={h.id}
-                          type="button"
-                          onClick={() => selectHospital(h)}
-                          className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-accent"
-                        >
-                          <Building2 className="h-4 w-4 text-muted-foreground" />
-                          <span>{h.name} | {h.subject} | {h.location}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {favoriteHospitals.length === 0 && recentHospitals.length === 0 && (
-                    <p className="py-4 text-center text-sm text-muted-foreground">
-                      병원명, 진료과, 지역으로 검색하세요.
-                    </p>
-                  )}
-                </div>
-              ) : hospitalsForAutocomplete.length === 0 ? (
-                <p className="p-4 text-center text-sm text-muted-foreground">검색 결과 없음</p>
-              ) : (
-                <ul className="py-1">
-                  {hospitalsForAutocomplete.map((h: Hospital & { display: string }) => (
-                    <li key={h.id}>
-                      <button
-                        type="button"
-                        onClick={() => selectHospital(h)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                      >
-                        <button
-                          type="button"
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            toggleFavorite(h.id);
-                          }}
-                          className="shrink-0"
-                          aria-label={h.favorite ? "즐겨찾기 해제" : "즐겨찾기"}
-                        >
-                          <Star
-                            className={cn(
-                              "h-4 w-4",
-                              h.favorite ? "fill-amber-400 text-amber-400" : "text-muted-foreground"
-                            )}
-                          />
-                        </button>
-                        <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{h.display}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Filters */}
+      {/* Search + Filters Row */}
       <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px]" ref={autocompleteRef}>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="병원 검색 (이름 | 진료과 | 지역)"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setAutocompleteOpen(true);
+                setHasSearched(false);
+              }}
+              onFocus={() => setAutocompleteOpen(true)}
+              className="w-full rounded-lg border border-input bg-background py-2.5 pl-10 pr-4 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <AnimatePresence>
+            {autocompleteOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="absolute top-full z-50 mt-1 max-h-72 w-full overflow-auto rounded-lg border bg-popover shadow-lg"
+              >
+                {!debouncedQuery.trim() ? (
+                  <div className="space-y-2 p-3">
+                    {favoriteHospitals.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-xs font-medium text-muted-foreground">
+                          즐겨찾기
+                        </p>
+                        {favoriteHospitals.map((h: Hospital) => (
+                          <button
+                            key={h.id}
+                            type="button"
+                            onClick={() => selectHospital(h)}
+                            className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <span>
+                              {h.name} | {h.subject} | {h.location}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {recentHospitals.length > 0 && (
+                      <div>
+                        <p className="mb-1 text-xs font-medium text-muted-foreground">
+                          최근 검색
+                        </p>
+                        {recentHospitals.map((h: Hospital) => (
+                          <button
+                            key={h.id}
+                            type="button"
+                            onClick={() => selectHospital(h)}
+                            className="flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <span>
+                              {h.name} | {h.subject} | {h.location}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {favoriteHospitals.length === 0 &&
+                      recentHospitals.length === 0 && (
+                        <p className="py-4 text-center text-sm text-muted-foreground">
+                          병원명, 진료과, 지역으로 검색하세요.
+                        </p>
+                      )}
+                  </div>
+                ) : hospitalsForAutocomplete.length === 0 ? (
+                  <p className="p-4 text-center text-sm text-muted-foreground">
+                    검색 결과 없음
+                  </p>
+                ) : (
+                  <ul className="py-1">
+                    {hospitalsForAutocomplete.map(
+                      (h: Hospital & { display: string }) => (
+                        <li key={h.id}>
+                          <button
+                            type="button"
+                            onClick={() => selectHospital(h)}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                          >
+                            <button
+                              type="button"
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                toggleFavorite(h.id);
+                              }}
+                              className="shrink-0"
+                              aria-label={
+                                h.favorite ? "즐겨찾기 해제" : "즐겨찾기"
+                              }
+                            >
+                              <Star
+                                className={cn(
+                                  "h-4 w-4",
+                                  h.favorite
+                                    ? "fill-amber-400 text-amber-400"
+                                    : "text-muted-foreground",
+                                )}
+                              />
+                            </button>
+                            <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{h.display}</span>
+                          </button>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSearch}
+          className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+        >
+          검색
+        </button>
+
         <button
           type="button"
           onClick={() => setFilterOpen((o) => !o)}
@@ -512,46 +647,73 @@ export default function DashBoard() {
           <Filter className="h-4 w-4" />
           필터
         </button>
+        <button
+          type="button"
+          onClick={handleResetFilters}
+          disabled={!hasActiveFilters}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-medium",
+            !hasActiveFilters && "cursor-not-allowed opacity-50",
+          )}
+        >
+          초기화
+        </button>
         {filterOpen && (
-          <div className="flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-3">
+          <div className="mt-2 flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-3">
             <div className="flex items-center gap-2">
               <Calendar className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm">기간</span>
               <select
                 value={startYear}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStartYear(Number(e.target.value))}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setStartYear(Number(e.target.value))
+                }
                 className="rounded border bg-background px-2 py-1 text-sm"
               >
                 {[2024, 2025].map((y) => (
-                  <option key={y} value={y}>{y}년</option>
+                  <option key={y} value={y}>
+                    {y}년
+                  </option>
                 ))}
               </select>
               <select
                 value={startMonth}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setStartMonth(Number(e.target.value))}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setStartMonth(Number(e.target.value))
+                }
                 className="rounded border bg-background px-2 py-1 text-sm"
               >
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>{m}월</option>
+                  <option key={m} value={m}>
+                    {m}월
+                  </option>
                 ))}
               </select>
               <span className="text-muted-foreground">~</span>
               <select
                 value={endYear}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEndYear(Number(e.target.value))}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setEndYear(Number(e.target.value))
+                }
                 className="rounded border bg-background px-2 py-1 text-sm"
               >
                 {[2024, 2025].map((y) => (
-                  <option key={y} value={y}>{y}년</option>
+                  <option key={y} value={y}>
+                    {y}년
+                  </option>
                 ))}
               </select>
               <select
                 value={endMonth}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEndMonth(Number(e.target.value))}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setEndMonth(Number(e.target.value))
+                }
                 className="rounded border bg-background px-2 py-1 text-sm"
               >
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>{m}월</option>
+                  <option key={m} value={m}>
+                    {m}월
+                  </option>
                 ))}
               </select>
             </div>
@@ -561,21 +723,37 @@ export default function DashBoard() {
                 onClick={() => setEventDropdownOpen((o) => !o)}
                 className="inline-flex items-center gap-1 rounded border bg-background px-3 py-1.5 text-sm"
               >
-                이벤트 {eventFilter.length > 0 && `(${eventFilter.length})`}
+                이벤트 {selectedEvent && `(${selectedEvent})`}
                 <ChevronDown className="h-4 w-4" />
               </button>
               {eventDropdownOpen && (
                 <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-lg border bg-popover p-2 shadow-lg">
+                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent">
+                    <input
+                      type="radio"
+                      name="event-filter"
+                      checked={selectedEvent === null}
+                      onChange={() => {
+                        setSelectedEvent(null);
+                        setHasSearched(false);
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">전체</span>
+                  </label>
                   {EVENT_NAMES.map((name) => (
-                    <label key={name} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent">
+                    <label
+                      key={name}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent"
+                    >
                       <input
-                        type="checkbox"
-                        checked={eventFilter.includes(name)}
-                        onChange={() =>
-                          setEventFilter((prev: string[]) =>
-                            prev.includes(name) ? prev.filter((x: string) => x !== name) : [...prev, name]
-                          )
-                        }
+                        type="radio"
+                        name="event-filter"
+                        checked={selectedEvent === name}
+                        onChange={() => {
+                          setSelectedEvent(name);
+                          setHasSearched(false);
+                        }}
                         className="rounded border-gray-300"
                       />
                       <span className="text-sm">{name}</span>
@@ -585,10 +763,12 @@ export default function DashBoard() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">유형</span>
+              <span className="text-sm text-muted-foreground">충전 유형</span>
               <select
                 value={serviceTypeFilter}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setServiceTypeFilter(e.target.value as ServiceType)}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setServiceTypeFilter(e.target.value as ServiceType)
+                }
                 className="rounded border bg-background px-2 py-1 text-sm"
               >
                 <option value="all">전체</option>
@@ -600,37 +780,41 @@ export default function DashBoard() {
         )}
       </div>
 
-      {/* Selected hospital chip */}
+      {/* Selected hospital + active filter summary */}
       {selectedHospital && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-2"
+          className="flex flex-wrap items-center gap-2 text-sm"
         >
-          <span className="text-sm font-medium">
-            {selectedHospital.name} | {selectedHospital.subject} | {selectedHospital.location}
+          <span className="font-medium">
+            {selectedHospital.name} | {selectedHospital.subject} |{" "}
+            {selectedHospital.location}
           </span>
-          <button
-            type="button"
-            onClick={() => setSelectedHospital(null)}
-            className="rounded p-1 text-muted-foreground hover:bg-muted"
-            aria-label="선택 해제"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {activeFilterLabel && (
+            <span className="text-xs text-muted-foreground">
+              · {activeFilterLabel}
+            </span>
+          )}
         </motion.div>
       )}
 
       {/* Summary Cards */}
-      {selectedHospital && (
+      {selectedHospital && hasSearched && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
         >
           {[
-            { label: "Total Delivery", value: summary.totalDelivery.toLocaleString() },
-            { label: "Total Bookings", value: summary.totalBooking.toLocaleString() },
+            {
+              label: "Total Delivery",
+              value: summary.totalDelivery.toLocaleString(),
+            },
+            {
+              label: "Total Bookings",
+              value: summary.totalBooking.toLocaleString(),
+            },
             {
               label: "Avg. Booking Rate",
               value: `${summary.avgBookingRate.toFixed(2)}%`,
@@ -644,7 +828,9 @@ export default function DashBoard() {
               key={label}
               className="rounded-lg border bg-card p-4 text-card-foreground shadow-sm"
             >
-              <p className="text-xs font-medium text-muted-foreground">{label}</p>
+              <p className="text-xs font-medium text-muted-foreground">
+                {label}
+              </p>
               <p className="mt-1 text-2xl font-semibold">{value}</p>
             </div>
           ))}
@@ -678,18 +864,28 @@ export default function DashBoard() {
           animate={{ opacity: 1 }}
           className="overflow-hidden rounded-lg border"
         >
-          <div className="overflow-x-auto overflow-y-auto max-h-[60vh]">
+          <div className="overflow-x-auto overflow-y-auto h-full">
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-muted font-medium">
                 <tr>
                   <th className="border-b border-r px-3 py-2 text-left">년</th>
                   <th className="border-b border-r px-3 py-2 text-left">월</th>
-                  <th className="border-b border-r px-3 py-2 text-left">이벤트</th>
-                  <th className="border-b border-r px-3 py-2 text-right">Delivery</th>
-                  <th className="border-b border-r px-3 py-2 text-right">Booking</th>
-                  <th className="border-b border-r px-3 py-2 text-right">Visit</th>
-                  <th className="border-b border-r px-3 py-2 text-right">Booking Rate</th>
-                  <th className="border-b px-3 py-2 text-right">Visit Rate</th>
+                  <th className="border-b border-r px-3 py-2 text-left">
+                    이벤트
+                  </th>
+                  <th className="border-b border-r px-3 py-2 text-right">
+                    전체 전달 수
+                  </th>
+                  <th className="border-b border-r px-3 py-2 text-right">
+                    내원 예약
+                  </th>
+                  <th className="border-b border-r px-3 py-2 text-right">
+                    내원 완료
+                  </th>
+                  <th className="border-b border-r px-3 py-2 text-right">
+                    예약률
+                  </th>
+                  <th className="border-b px-3 py-2 text-right">내원율</th>
                 </tr>
               </thead>
               <tbody>
@@ -698,19 +894,33 @@ export default function DashBoard() {
                     key={idx}
                     className={cn(
                       row.kind === "event" && idx % 2 === 1 && "bg-muted/30",
-                      row.kind === "monthlyTotal" && "bg-muted/50 font-medium",
-                      row.kind === "yearlyTotal" && "bg-muted font-semibold"
+                      row.kind === "monthlyTotal" &&
+                        "bg-gray-200 font-semibold",
+                      row.kind === "yearlyTotal" && "bg-blue-100 font-bold",
                     )}
                   >
-                    <td className="border-b border-r px-3 py-1.5">
-                      {row.year ?? ""}
-                    </td>
-                    <td className="border-b border-r px-3 py-1.5">
-                      {row.month ?? ""}
-                    </td>
-                    <td className="border-b border-r px-3 py-1.5">
-                      {row.eventName}
-                    </td>
+                    {row.kind === "event" ? (
+                      <>
+                        <td className="border-b border-r px-3 py-1.5">
+                          {row.year ?? ""}
+                        </td>
+                        <td className="border-b border-r px-3 py-1.5">
+                          {row.month ?? ""}
+                        </td>
+                        <td className="border-b border-r px-3 py-1.5">
+                          {row.eventName}
+                        </td>
+                      </>
+                    ) : (
+                      <td
+                        colSpan={3}
+                        className="border-b border-r px-3 py-1.5 text-left font-medium"
+                      >
+                        {row.kind === "monthlyTotal"
+                          ? `${row.year ?? ""}년 ${row.month ?? ""}월 소계`
+                          : `${row.year ?? ""}년 소계`}
+                      </td>
+                    )}
                     <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
                       {row.delivery.toLocaleString()}
                     </td>
@@ -720,36 +930,40 @@ export default function DashBoard() {
                     <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
                       {row.visit.toLocaleString()}
                     </td>
-                    <td
-                      className={cn(
-                        "border-b border-r px-3 py-1.5 text-right tabular-nums",
-                        row.kind === "event" &&
-                          row.bookingRate > 20 &&
-                          "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100",
-                        row.kind === "event" &&
-                          row.bookingRate < 5 &&
-                          row.bookingRate > 0 &&
-                          "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-100"
-                      )}
-                    >
-                      {row.delivery > 0 ? `${row.bookingRate.toFixed(2)}%` : "-"}
+                    <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
+                      {row.delivery > 0
+                        ? `${row.bookingRate.toFixed(2)}%`
+                        : "-"}
                     </td>
-                    <td
-                      className={cn(
-                        "border-b px-3 py-1.5 text-right tabular-nums",
-                        row.kind === "event" &&
-                          row.bookingRate > 20 &&
-                          "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100",
-                        row.kind === "event" &&
-                          row.bookingRate < 5 &&
-                          row.bookingRate > 0 &&
-                          "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-100"
-                      )}
-                    >
-                      {row.booking > 0 ? `${row.visitRate.toFixed(2)}%` : "-"}
+                    <td className="border-b px-3 py-1.5 text-right tabular-nums">
+                      {row.delivery > 0 ? `${row.visitRate.toFixed(2)}%` : "-"}
                     </td>
                   </tr>
                 ))}
+                <tr className="bg-blue-300 font-semibold text-blue-950">
+                  <td className="border-b border-r px-3 py-1.5" colSpan={3}>
+                    전체 소계
+                  </td>
+                  <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
+                    {summary.totalDelivery.toLocaleString()}
+                  </td>
+                  <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
+                    {summary.totalBooking.toLocaleString()}
+                  </td>
+                  <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
+                    {summary.totalVisit.toLocaleString()}
+                  </td>
+                  <td className="border-b border-r px-3 py-1.5 text-right tabular-nums">
+                    {summary.totalDelivery > 0
+                      ? `${summary.avgBookingRate.toFixed(2)}%`
+                      : "-"}
+                  </td>
+                  <td className="border-b px-3 py-1.5 text-right tabular-nums">
+                    {summary.totalDelivery > 0
+                      ? `${summary.avgVisitRate.toFixed(2)}%`
+                      : "-"}
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
