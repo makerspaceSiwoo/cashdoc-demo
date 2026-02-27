@@ -5,9 +5,9 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen w-full bg-background p-8">
       <div className="mx-auto w-full max-w-6xl space-y-6">
-        <h1 className="text-2xl font-bold">Hospital Performance Analysis</h1>
+        <h1 className="text-2xl font-bold">CMS 예약률/내원율 대시보드</h1>
         <p className="text-muted-foreground">
-          병원 검색 후 선택하면 딥 애널리틱스와 엑셀 스타일 테이블을 볼 수 있습니다.
+          병원 검색 후 선택하면 예약률/내원율 데이터를 볼 수 있습니다.
         </p>
         <Link
           href="/"

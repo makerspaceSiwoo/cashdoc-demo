@@ -632,11 +632,7 @@ export default function DashBoard() {
                         </p>
                       )}
                   </div>
-                ) : hospitalsForAutocomplete.length === 0 ? (
-                  <p className="p-4 text-center text-sm text-muted-foreground">
-                    검색 결과 없음
-                  </p>
-                ) : (
+                ) : hospitalsForAutocomplete.length === 0 ? null : (
                   <ul className="py-1">
                     {hospitalsForAutocomplete.map(
                       (h: Hospital & { display: string }) => (
@@ -887,12 +883,21 @@ export default function DashBoard() {
       )}
 
       {/* No results / Welcome */}
-      {!selectedHospital && (
+      {!selectedHospital && !hasSearched && (
         <div className="rounded-lg border border-dashed bg-muted/20 p-12 text-center">
           <Building2 className="mx-auto h-12 w-12 text-muted-foreground" />
           <p className="mt-2 text-sm font-medium">병원을 검색해 선택하세요</p>
           <p className="mt-1 text-xs text-muted-foreground">
             검색 후 병원을 선택하면 상세 분석 테이블이 표시됩니다.
+          </p>
+        </div>
+      )}
+
+      {!selectedHospital && hasSearched && (
+        <div className="rounded-lg border bg-muted/30 p-8 text-center">
+          <p className="text-sm font-medium">검색 결과가 없습니다.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            병원명을 다시 확인하거나 다른 검색어를 입력해 보세요.
           </p>
         </div>
       )}
