@@ -191,7 +191,12 @@ function buildTableRows(records: EventRecord[]): TableRow[] {
     if (!byYearMonth.has(key)) byYearMonth.set(key, []);
     byYearMonth.get(key)!.push(r);
   }
-  const sortedKeys = Array.from(byYearMonth.keys()).sort();
+  const sortedKeys = Array.from(byYearMonth.keys()).sort((a, b) => {
+    const [ya, ma] = a.split("-").map(Number);
+    const [yb, mb] = b.split("-").map(Number);
+    if (ya !== yb) return ya - yb;
+    return ma - mb;
+  });
   let currentYear = 0;
   let yearDelivery = 0,
     yearBooking = 0,
