@@ -325,10 +325,7 @@ export default function DashBoard() {
       }));
   }, [hospitals, debouncedQuery]);
 
-  const tableRows = useMemo(
-    () => buildTableRows(viewRecords),
-    [viewRecords],
-  );
+  const tableRows = useMemo(() => buildTableRows(viewRecords), [viewRecords]);
 
   const summary = useMemo(() => {
     const totalDelivery = viewRecords.reduce(
@@ -443,6 +440,7 @@ export default function DashBoard() {
   // 1) 검색창 + 검색 버튼: 병원 이름과 완전히 일치하는 경우만 로드
   const handleSearch = useCallback(() => {
     const q = searchQuery.trim();
+    setSearchQuery("");
     if (!q) {
       setSelectedHospital(null);
       setBaseRecords([]);
