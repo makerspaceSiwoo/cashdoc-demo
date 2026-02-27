@@ -297,7 +297,6 @@ export default function DashBoard() {
     useState<ServiceType>("all");
   const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
   const [baseRecords, setBaseRecords] = useState<EventRecord[]>([]);
   const [viewRecords, setViewRecords] = useState<EventRecord[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -437,52 +436,6 @@ export default function DashBoard() {
     setViewRecords(filtered);
   }, [baseRecords, startYear, startMonth, endYear, endMonth, selectedEvent]);
 
-  // 1) 검색창 + 검색 버튼: 병원 이름과 완전히 일치하는 경우만 로드
-  const handleSearch = useCallback(() => {
-    const q = searchQuery.trim();
-    setSearchQuery("");
-    if (!q) {
-      setSelectedHospital(null);
-      setBaseRecords([]);
-      setViewRecords([]);
-      setHasSearched(false);
-      return;
-    }
-
-    const exact = hospitals.find((h) => h.name === q);
-    if (!exact) {
-      setSelectedHospital(null);
-      setBaseRecords([]);
-      setViewRecords([]);
-      setHasSearched(true);
-      return;
-    }
-
-    const all = getMockEventData(exact.id);
-    setSelectedHospital(exact);
-    setBaseRecords(all);
-    setViewRecords(all);
-    setStartYear(2024);
-    setStartMonth(1);
-    setEndYear(2025);
-    setEndMonth(12);
-    setSelectedEvent(null);
-    setServiceTypeFilter("all");
-    setHasSearched(true);
-
-    // 최근 검색 목록 업데이트
-    try {
-      const recent = loadRecent();
-      const next = [exact.id, ...recent.filter((id) => id !== exact.id)].slice(
-        0,
-        5,
-      );
-      localStorage.setItem(STORAGE_RECENT, JSON.stringify(next));
-    } catch {
-      // ignore
-    }
-  }, [hospitals, searchQuery]);
-
   const toggleFavorite = useCallback((id: string) => {
     setHospitals((prev: Hospital[]) => {
       const next = prev.map((h: Hospital) =>
@@ -510,7 +463,6 @@ export default function DashBoard() {
     setEndMonth(12);
     setSelectedEvent(null);
     setServiceTypeFilter("all");
-    setHasSearched(true);
 
     setAutocompleteOpen(false);
     setSearchQuery("");
@@ -550,7 +502,7 @@ export default function DashBoard() {
     .filter(Boolean) as Hospital[];
   const favoriteHospitals = hospitals.filter((h: Hospital) => h.favorite);
 
-  const noResults = !!selectedHospital && hasSearched && tableRows.length === 0;
+  const noResults = !!selectedHospital && tableRows.length === 0;
 
   return (
     <div className="space-y-6">
@@ -569,6 +521,18 @@ export default function DashBoard() {
                 setAutocompleteOpen(true);
               }}
               onFocus={() => setAutocompleteOpen(true)}
+              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (hospitalsForAutocomplete.length === 0) {
+                  // 자동완성에 "검색 결과 없음"을 보여주기 위해 열어 두기만 함
+                  setAutocompleteOpen(true);
+                  return;
+                }
+                const first = hospitalsForAutocomplete[0];
+                selectHospital(first);
+                setAutocompleteOpen(false);
+              }}
               className="w-full rounded-lg border border-input bg-background py-2.5 pl-10 pr-4 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
             />
           </div>
@@ -630,7 +594,11 @@ export default function DashBoard() {
                         </p>
                       )}
                   </div>
-                ) : hospitalsForAutocomplete.length === 0 ? null : (
+                ) : hospitalsForAutocomplete.length === 0 ? (
+                  <p className="p-4 text-center text-sm text-muted-foreground">
+                    검색 결과 없음
+                  </p>
+                ) : (
                   <ul className="py-1">
                     {hospitalsForAutocomplete.map(
                       (h: Hospital & { display: string }) => (
@@ -673,13 +641,6 @@ export default function DashBoard() {
           </AnimatePresence>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSearch}
-          className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-        >
-          검색
-        </button>
       </div>
 
       {/* Filters Row: 기간/이벤트/유형 + 적용/초기화 */}
@@ -843,7 +804,7 @@ export default function DashBoard() {
       )}
 
       {/* Summary Cards */}
-      {selectedHospital && hasSearched && (
+      {selectedHospital && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -881,21 +842,12 @@ export default function DashBoard() {
       )}
 
       {/* No results / Welcome */}
-      {!selectedHospital && !hasSearched && (
+      {!selectedHospital && (
         <div className="rounded-lg border border-dashed bg-muted/20 p-12 text-center">
           <Building2 className="mx-auto h-12 w-12 text-muted-foreground" />
           <p className="mt-2 text-sm font-medium">병원을 검색해 선택하세요</p>
           <p className="mt-1 text-xs text-muted-foreground">
             검색 후 병원을 선택하면 상세 분석 테이블이 표시됩니다.
-          </p>
-        </div>
-      )}
-
-      {!selectedHospital && hasSearched && (
-        <div className="rounded-lg border bg-muted/30 p-8 text-center">
-          <p className="text-sm font-medium">검색 결과가 없습니다.</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            병원명을 다시 확인하거나 다른 검색어를 입력해 보세요.
           </p>
         </div>
       )}
