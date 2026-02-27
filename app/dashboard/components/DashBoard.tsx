@@ -295,10 +295,11 @@ export default function DashBoard() {
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [serviceTypeFilter, setServiceTypeFilter] =
     useState<ServiceType>("all");
-  const [filterOpen, setFilterOpen] = useState(false);
   const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [baseRecords, setBaseRecords] = useState<EventRecord[]>([]);
+  const [viewRecords, setViewRecords] = useState<EventRecord[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<HTMLDivElement>(null);
 
@@ -324,52 +325,35 @@ export default function DashBoard() {
       }));
   }, [hospitals, debouncedQuery]);
 
-  const allEventData = useMemo(() => {
-    if (!selectedHospital) return [];
-    return getMockEventData(selectedHospital.id);
-  }, [selectedHospital]);
-
-  const filteredRecords = useMemo(() => {
-    return allEventData.filter((r) => {
-      const inRange =
-        (r.year > startYear ||
-          (r.year === startYear && r.month >= startMonth)) &&
-        (r.year < endYear || (r.year === endYear && r.month <= endMonth));
-      if (!inRange) return false;
-      if (selectedEvent && r.eventName !== selectedEvent) return false;
-      return true;
-    });
-  }, [allEventData, startYear, startMonth, endYear, endMonth, selectedEvent]);
-
   const tableRows = useMemo(
-    () => buildTableRows(filteredRecords),
-    [filteredRecords],
+    () => buildTableRows(viewRecords),
+    [viewRecords],
   );
 
   const summary = useMemo(() => {
-    const totalDelivery = filteredRecords.reduce(
+    const totalDelivery = viewRecords.reduce(
       (s: number, r: EventRecord) => s + r.delivery,
       0,
     );
-    const totalBooking = filteredRecords.reduce(
+    const totalBooking = viewRecords.reduce(
       (s: number, r: EventRecord) => s + r.booking,
       0,
     );
-    const totalVisit = filteredRecords.reduce(
+    const totalVisit = viewRecords.reduce(
       (s: number, r: EventRecord) => s + r.visit,
       0,
     );
-    const count = filteredRecords.length;
+    const count = viewRecords.length;
     const avgBookingRate =
       count > 0
-        ? filteredRecords.reduce(
+        ? viewRecords.reduce(
             (s: number, r: EventRecord) => s + r.bookingRate,
             0,
           ) / count
         : 0;
     const avgVisitRate =
       count > 0
-        ? filteredRecords.reduce(
+        ? viewRecords.reduce(
             (s: number, r: EventRecord) => s + r.visitRate,
             0,
           ) / count
@@ -381,7 +365,7 @@ export default function DashBoard() {
       avgBookingRate,
       avgVisitRate,
     };
-  }, [filteredRecords]);
+  }, [viewRecords]);
 
   const hospitalsForAutocomplete = useMemo(() => {
     let list = filteredHospitals;
@@ -440,14 +424,66 @@ export default function DashBoard() {
     setEndMonth(12);
     setSelectedEvent(null);
     setServiceTypeFilter("all");
-    setHasSearched(false);
-  }, []);
+    setViewRecords(baseRecords);
+  }, [baseRecords]);
 
+  const handleApplyFilters = useCallback(() => {
+    const filtered = baseRecords.filter((r) => {
+      const inRange =
+        (r.year > startYear ||
+          (r.year === startYear && r.month >= startMonth)) &&
+        (r.year < endYear || (r.year === endYear && r.month <= endMonth));
+      if (!inRange) return false;
+      if (selectedEvent && r.eventName !== selectedEvent) return false;
+      return true;
+    });
+    setViewRecords(filtered);
+  }, [baseRecords, startYear, startMonth, endYear, endMonth, selectedEvent]);
+
+  // 1) 검색창 + 검색 버튼: 병원 이름과 완전히 일치하는 경우만 로드
   const handleSearch = useCallback(() => {
-    if (selectedHospital) {
-      setHasSearched(true);
+    const q = searchQuery.trim();
+    if (!q) {
+      setSelectedHospital(null);
+      setBaseRecords([]);
+      setViewRecords([]);
+      setHasSearched(false);
+      return;
     }
-  }, [selectedHospital]);
+
+    const exact = hospitals.find((h) => h.name === q);
+    if (!exact) {
+      setSelectedHospital(null);
+      setBaseRecords([]);
+      setViewRecords([]);
+      setHasSearched(true);
+      return;
+    }
+
+    const all = getMockEventData(exact.id);
+    setSelectedHospital(exact);
+    setBaseRecords(all);
+    setViewRecords(all);
+    setStartYear(2024);
+    setStartMonth(1);
+    setEndYear(2025);
+    setEndMonth(12);
+    setSelectedEvent(null);
+    setServiceTypeFilter("all");
+    setHasSearched(true);
+
+    // 최근 검색 목록 업데이트
+    try {
+      const recent = loadRecent();
+      const next = [exact.id, ...recent.filter((id) => id !== exact.id)].slice(
+        0,
+        5,
+      );
+      localStorage.setItem(STORAGE_RECENT, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+  }, [hospitals, searchQuery]);
 
   const toggleFavorite = useCallback((id: string) => {
     setHospitals((prev: Hospital[]) => {
@@ -464,16 +500,29 @@ export default function DashBoard() {
     });
   }, []);
 
+  // 2,3) 즐겨찾기/최근/자동완성 클릭: 검색 버튼 없이 바로 데이터 로드
   const selectHospital = useCallback((h: Hospital): void => {
     setSelectedHospital(h);
-    setHasSearched(false);
+    const all = getMockEventData(h.id);
+    setBaseRecords(all);
+    setViewRecords(all);
+    setStartYear(2024);
+    setStartMonth(1);
+    setEndYear(2025);
+    setEndMonth(12);
+    setSelectedEvent(null);
+    setServiceTypeFilter("all");
+    setHasSearched(true);
+
     setAutocompleteOpen(false);
     setSearchQuery("");
     try {
       const recent = loadRecent();
       const next = [h.id, ...recent.filter((id) => id !== h.id)].slice(0, 5);
       localStorage.setItem(STORAGE_RECENT, JSON.stringify(next));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -507,7 +556,7 @@ export default function DashBoard() {
 
   return (
     <div className="space-y-6">
-      {/* Search + Filters Row */}
+      {/* Search Row: 병원명 검색 + 검색 버튼 */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[220px]" ref={autocompleteRef}>
           <div className="relative">
@@ -520,7 +569,6 @@ export default function DashBoard() {
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setAutocompleteOpen(true);
-                setHasSearched(false);
               }}
               onFocus={() => setAutocompleteOpen(true)}
               className="w-full rounded-lg border border-input bg-background py-2.5 pl-10 pr-4 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
@@ -638,146 +686,147 @@ export default function DashBoard() {
         >
           검색
         </button>
+      </div>
 
-        <button
-          type="button"
-          onClick={() => setFilterOpen((o) => !o)}
-          className="inline-flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-medium"
-        >
-          <Filter className="h-4 w-4" />
-          필터
-        </button>
-        <button
-          type="button"
-          onClick={handleResetFilters}
-          disabled={!hasActiveFilters}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-medium",
-            !hasActiveFilters && "cursor-not-allowed opacity-50",
+      {/* Filters Row: 기간/이벤트/유형 + 적용/초기화 */}
+      <div className="mt-3 flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-3">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm">기간</span>
+          <select
+            value={startYear}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setStartYear(Number(e.target.value))
+            }
+            className="rounded border bg-background px-2 py-1 text-sm"
+          >
+            {[2024, 2025].map((y) => (
+              <option key={y} value={y}>
+                {y}년
+              </option>
+            ))}
+          </select>
+          <select
+            value={startMonth}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setStartMonth(Number(e.target.value))
+            }
+            className="rounded border bg-background px-2 py-1 text-sm"
+          >
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+              <option key={m} value={m}>
+                {m}월
+              </option>
+            ))}
+          </select>
+          <span className="text-muted-foreground">~</span>
+          <select
+            value={endYear}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setEndYear(Number(e.target.value))
+            }
+            className="rounded border bg-background px-2 py-1 text-sm"
+          >
+            {[2024, 2025].map((y) => (
+              <option key={y} value={y}>
+                {y}년
+              </option>
+            ))}
+          </select>
+          <select
+            value={endMonth}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setEndMonth(Number(e.target.value))
+            }
+            className="rounded border bg-background px-2 py-1 text-sm"
+          >
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+              <option key={m} value={m}>
+                {m}월
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="relative" data-event-dropdown>
+          <button
+            type="button"
+            onClick={() => setEventDropdownOpen((o) => !o)}
+            className="inline-flex items-center gap-1 rounded border bg-background px-3 py-1.5 text-sm"
+          >
+            이벤트 {selectedEvent && `(${selectedEvent})`}
+            <ChevronDown className="h-4 w-4" />
+          </button>
+          {eventDropdownOpen && (
+            <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-lg border bg-popover p-2 shadow-lg">
+              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent">
+                <input
+                  type="radio"
+                  name="event-filter"
+                  checked={selectedEvent === null}
+                  onChange={() => {
+                    setSelectedEvent(null);
+                  }}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-sm">전체</span>
+              </label>
+              {EVENT_NAMES.map((name) => (
+                <label
+                  key={name}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent"
+                >
+                  <input
+                    type="radio"
+                    name="event-filter"
+                    checked={selectedEvent === name}
+                    onChange={() => {
+                      setSelectedEvent(name);
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm">{name}</span>
+                </label>
+              ))}
+            </div>
           )}
-        >
-          초기화
-        </button>
-        {filterOpen && (
-          <div className="mt-2 flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-3">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">기간</span>
-              <select
-                value={startYear}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                  setStartYear(Number(e.target.value))
-                }
-                className="rounded border bg-background px-2 py-1 text-sm"
-              >
-                {[2024, 2025].map((y) => (
-                  <option key={y} value={y}>
-                    {y}년
-                  </option>
-                ))}
-              </select>
-              <select
-                value={startMonth}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                  setStartMonth(Number(e.target.value))
-                }
-                className="rounded border bg-background px-2 py-1 text-sm"
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {m}월
-                  </option>
-                ))}
-              </select>
-              <span className="text-muted-foreground">~</span>
-              <select
-                value={endYear}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                  setEndYear(Number(e.target.value))
-                }
-                className="rounded border bg-background px-2 py-1 text-sm"
-              >
-                {[2024, 2025].map((y) => (
-                  <option key={y} value={y}>
-                    {y}년
-                  </option>
-                ))}
-              </select>
-              <select
-                value={endMonth}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                  setEndMonth(Number(e.target.value))
-                }
-                className="rounded border bg-background px-2 py-1 text-sm"
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {m}월
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="relative" data-event-dropdown>
-              <button
-                type="button"
-                onClick={() => setEventDropdownOpen((o) => !o)}
-                className="inline-flex items-center gap-1 rounded border bg-background px-3 py-1.5 text-sm"
-              >
-                이벤트 {selectedEvent && `(${selectedEvent})`}
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              {eventDropdownOpen && (
-                <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-lg border bg-popover p-2 shadow-lg">
-                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent">
-                    <input
-                      type="radio"
-                      name="event-filter"
-                      checked={selectedEvent === null}
-                      onChange={() => {
-                        setSelectedEvent(null);
-                        setHasSearched(false);
-                      }}
-                      className="rounded border-gray-300"
-                    />
-                    <span className="text-sm">전체</span>
-                  </label>
-                  {EVENT_NAMES.map((name) => (
-                    <label
-                      key={name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent"
-                    >
-                      <input
-                        type="radio"
-                        name="event-filter"
-                        checked={selectedEvent === name}
-                        onChange={() => {
-                          setSelectedEvent(name);
-                          setHasSearched(false);
-                        }}
-                        className="rounded border-gray-300"
-                      />
-                      <span className="text-sm">{name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">충전 유형</span>
-              <select
-                value={serviceTypeFilter}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-                  setServiceTypeFilter(e.target.value as ServiceType)
-                }
-                className="rounded border bg-background px-2 py-1 text-sm"
-              >
-                <option value="all">전체</option>
-                <option value="paid">유료</option>
-                <option value="free">무료</option>
-              </select>
-            </div>
-          </div>
-        )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">충전 유형</span>
+          <select
+            value={serviceTypeFilter}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setServiceTypeFilter(e.target.value as ServiceType)
+            }
+            className="rounded border bg-background px-2 py-1 text-sm"
+          >
+            <option value="all">전체</option>
+            <option value="paid">유료</option>
+            <option value="free">무료</option>
+          </select>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleApplyFilters}
+            className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
+            적용
+          </button>
+          <button
+            type="button"
+            onClick={handleResetFilters}
+            disabled={!hasActiveFilters}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-medium",
+              !hasActiveFilters && "cursor-not-allowed opacity-50",
+            )}
+          >
+            초기화
+          </button>
+        </div>
       </div>
 
       {/* Selected hospital + active filter summary */}
