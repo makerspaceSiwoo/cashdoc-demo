@@ -640,7 +640,6 @@ export default function DashBoard() {
             )}
           </AnimatePresence>
         </div>
-
       </div>
 
       {/* Filters Row: 기간/이벤트/유형 + 적용/초기화 */}
@@ -703,64 +702,26 @@ export default function DashBoard() {
           </select>
         </div>
 
-        <div className="relative" data-event-dropdown>
-          <button
-            type="button"
-            onClick={() => setEventDropdownOpen((o) => !o)}
-            className="inline-flex items-center gap-1 rounded border bg-background px-3 py-1.5 text-sm"
-          >
-            이벤트 {selectedEvent && `(${selectedEvent})`}
-            <ChevronDown className="h-4 w-4" />
-          </button>
-          {eventDropdownOpen && (
-            <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-lg border bg-popover p-2 shadow-lg">
-              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent">
-                <input
-                  type="radio"
-                  name="event-filter"
-                  checked={selectedEvent === null}
-                  onChange={() => {
-                    setSelectedEvent(null);
-                  }}
-                  className="rounded border-gray-300"
-                />
-                <span className="text-sm">전체</span>
-              </label>
-              {EVENT_NAMES.map((name) => (
-                <label
-                  key={name}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-accent"
-                >
-                  <input
-                    type="radio"
-                    name="event-filter"
-                    checked={selectedEvent === name}
-                    onChange={() => {
-                      setSelectedEvent(name);
-                    }}
-                    className="rounded border-gray-300"
-                  />
-                  <span className="text-sm">{name}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">충전 유형</span>
+          <span className="text-sm text-muted-foreground">이벤트</span>
           <select
-            value={serviceTypeFilter}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              setServiceTypeFilter(e.target.value as ServiceType)
-            }
+            value={selectedEvent ?? ""}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+              const v = e.target.value;
+              setSelectedEvent(v || null);
+            }}
             className="rounded border bg-background px-2 py-1 text-sm"
           >
-            <option value="all">전체</option>
-            <option value="paid">유료</option>
-            <option value="free">무료</option>
+            <option value="">전체</option>
+            {EVENT_NAMES.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
           </select>
         </div>
+
+        {/* 충전 유형 필터 UI는 제거 (serviceTypeFilter는 자동완성 필터에만 사용) */}
 
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -791,6 +752,11 @@ export default function DashBoard() {
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-wrap items-center gap-2 text-sm"
         >
+          {selectedHospital.serviceType === "paid" && (
+            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+              유료
+            </span>
+          )}
           <span className="font-medium">
             {selectedHospital.name} | {selectedHospital.subject} |{" "}
             {selectedHospital.location}
