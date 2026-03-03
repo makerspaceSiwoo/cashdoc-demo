@@ -2,18 +2,14 @@
 
 import { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Search,
-  Star,
-  Filter,
-  Building2,
-  Calendar,
-  ChevronDown,
-  X,
-} from "lucide-react";
+import { Search, Star, Building2, Calendar, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EventRecord, Hospital, ServiceType, TableRow } from "../types";
-import { EVENT_NAMES, MOCK_HOSPITALS, getMockEventData } from "../data/mock";
+import {
+  MOCK_HOSPITALS,
+  getMockEventData,
+  getEventsForHospital,
+} from "../data/mock";
 
 export type { ServiceType, Hospital, EventRecord, TableRow } from "../types";
 
@@ -152,12 +148,18 @@ export default function DashBoard() {
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [serviceTypeFilter, setServiceTypeFilter] =
     useState<ServiceType>("all");
-  const [eventDropdownOpen, setEventDropdownOpen] = useState(false);
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
   const [baseRecords, setBaseRecords] = useState<EventRecord[]>([]);
   const [viewRecords, setViewRecords] = useState<EventRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<HTMLDivElement>(null);
+
+  const hasFetched = baseRecords.length > 0;
+  const eventOptions = useMemo(
+    () => getEventsForHospital(selectedHospital?.id ?? ""),
+    [selectedHospital?.id],
+  );
 
   const debouncedQuery = useDebounce(searchQuery, 500);
 
@@ -270,28 +272,44 @@ export default function DashBoard() {
 
   const hasActiveFilters = activeFilterLabel.length > 0;
 
-  const handleResetFilters = useCallback(() => {
+  const applyFiltersToRecords = useCallback(
+    (records: EventRecord[]) => {
+      return records.filter((r) => {
+        const inRange =
+          (r.year > startYear ||
+            (r.year === startYear && r.month >= startMonth)) &&
+          (r.year < endYear || (r.year === endYear && r.month <= endMonth));
+        if (!inRange) return false;
+        if (selectedEvent && r.eventName !== selectedEvent) return false;
+        return true;
+      });
+    },
+    [startYear, startMonth, endYear, endMonth, selectedEvent],
+  );
+
+  const handleFetch = useCallback(() => {
+    if (!selectedHospital) return;
+    setIsLoading(true);
+    setTimeout(() => {
+      const all = getMockEventData(selectedHospital.id);
+      const filtered = applyFiltersToRecords(all);
+      setBaseRecords(all);
+      setViewRecords(filtered);
+      setIsLoading(false);
+    }, 600);
+  }, [selectedHospital, applyFiltersToRecords]);
+
+  const handleReset = useCallback(() => {
+    setSelectedHospital(null);
+    setSearchQuery("");
     setStartYear(2024);
     setStartMonth(1);
     setEndYear(2025);
     setEndMonth(12);
     setSelectedEvent(null);
-    setServiceTypeFilter("all");
-    setViewRecords(baseRecords);
-  }, [baseRecords]);
-
-  const handleApplyFilters = useCallback(() => {
-    const filtered = baseRecords.filter((r) => {
-      const inRange =
-        (r.year > startYear ||
-          (r.year === startYear && r.month >= startMonth)) &&
-        (r.year < endYear || (r.year === endYear && r.month <= endMonth));
-      if (!inRange) return false;
-      if (selectedEvent && r.eventName !== selectedEvent) return false;
-      return true;
-    });
-    setViewRecords(filtered);
-  }, [baseRecords, startYear, startMonth, endYear, endMonth, selectedEvent]);
+    setBaseRecords([]);
+    setViewRecords([]);
+  }, []);
 
   const toggleFavorite = useCallback((id: string) => {
     setHospitals((prev: Hospital[]) => {
@@ -308,21 +326,13 @@ export default function DashBoard() {
     });
   }, []);
 
-  // 2,3) 즐겨찾기/최근/자동완성 클릭: 검색 버튼 없이 바로 데이터 로드
+  // Step 1: 선택만 저장. 검색창에는 병원명 유지. 데이터 로드는 조회 버튼(Step 3)에서만.
   const selectHospital = useCallback((h: Hospital): void => {
     setSelectedHospital(h);
-    const all = getMockEventData(h.id);
-    setBaseRecords(all);
-    setViewRecords(all);
-    setStartYear(2024);
-    setStartMonth(1);
-    setEndYear(2025);
-    setEndMonth(12);
-    setSelectedEvent(null);
-    setServiceTypeFilter("all");
-
+    setSearchQuery(`${h.name} | ${h.subject} | ${h.location}`);
+    setBaseRecords([]);
+    setViewRecords([]);
     setAutocompleteOpen(false);
-    setSearchQuery("");
     try {
       const recent = loadRecent();
       const next = [h.id, ...recent.filter((id) => id !== h.id)].slice(0, 5);
@@ -330,6 +340,13 @@ export default function DashBoard() {
     } catch {
       // ignore
     }
+  }, []);
+
+  const clearHospitalSelection = useCallback(() => {
+    setSelectedHospital(null);
+    setSearchQuery("");
+    setBaseRecords([]);
+    setViewRecords([]);
   }, []);
 
   useEffect(() => {
@@ -342,16 +359,10 @@ export default function DashBoard() {
       ) {
         setAutocompleteOpen(false);
       }
-      if (
-        eventDropdownOpen &&
-        !(e.target as HTMLElement).closest("[data-event-dropdown]")
-      ) {
-        setEventDropdownOpen(false);
-      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [eventDropdownOpen]);
+  }, []);
 
   const recentIds = loadRecent();
   const recentHospitals = recentIds
@@ -359,13 +370,24 @@ export default function DashBoard() {
     .filter(Boolean) as Hospital[];
   const favoriteHospitals = hospitals.filter((h: Hospital) => h.favorite);
 
-  const noResults = !!selectedHospital && tableRows.length === 0;
+  const noResults = hasFetched && tableRows.length === 0;
+
+  // 선택된 병원이 바뀌면 해당 병원에 없는 이벤트 선택 해제
+  useEffect(() => {
+    if (!selectedHospital || selectedEvent === null) return;
+    const opts = getEventsForHospital(selectedHospital.id);
+    if (!opts.includes(selectedEvent)) setSelectedEvent(null);
+  }, [selectedHospital?.id, selectedEvent]);
 
   return (
     <div className="space-y-6">
-      {/* Search Row: 병원명 검색 + 검색 버튼 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[220px]" ref={autocompleteRef}>
+      {/* Step 1: 병원 검색 + Step 2: 필터 바 (검색창 오른쪽에 위치) */}
+      <div className="flex flex-wrap items-stretch gap-3">
+        {/* 검색창: 폭을 줄이고 고정 폭으로 배치 */}
+        <div
+          className="relative w-full max-w-sm md:max-w-md"
+          ref={autocompleteRef}
+        >
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -382,7 +404,6 @@ export default function DashBoard() {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
                 if (hospitalsForAutocomplete.length === 0) {
-                  // 자동완성에 "검색 결과 없음"을 보여주기 위해 열어 두기만 함
                   setAutocompleteOpen(true);
                   return;
                 }
@@ -390,8 +411,21 @@ export default function DashBoard() {
                 selectHospital(first);
                 setAutocompleteOpen(false);
               }}
-              className="w-full rounded-lg border border-input bg-background py-2.5 pl-10 pr-4 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
+              className="w-full rounded-lg border border-input bg-background py-2.5 pl-10 pr-9 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
             />
+            {(searchQuery.length > 0 || selectedHospital) && (
+              <button
+                type="button"
+                onClick={() => {
+                  clearHospitalSelection();
+                  searchInputRef.current?.focus();
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="선택 초기화"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
           <AnimatePresence>
             {autocompleteOpen && (
@@ -497,113 +531,114 @@ export default function DashBoard() {
             )}
           </AnimatePresence>
         </div>
-      </div>
 
-      {/* Filters Row: 기간/이벤트/유형 + 적용/초기화 */}
-      <div className="mt-3 flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-3">
-        <div className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm">기간</span>
-          <select
-            value={startYear}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              setStartYear(Number(e.target.value))
-            }
-            className="rounded border bg-background px-2 py-1 text-sm"
-          >
-            {[2024, 2025].map((y) => (
-              <option key={y} value={y}>
-                {y}년
-              </option>
-            ))}
-          </select>
-          <select
-            value={startMonth}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              setStartMonth(Number(e.target.value))
-            }
-            className="rounded border bg-background px-2 py-1 text-sm"
-          >
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m}>
-                {m}월
-              </option>
-            ))}
-          </select>
-          <span className="text-muted-foreground">~</span>
-          <select
-            value={endYear}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              setEndYear(Number(e.target.value))
-            }
-            className="rounded border bg-background px-2 py-1 text-sm"
-          >
-            {[2024, 2025].map((y) => (
-              <option key={y} value={y}>
-                {y}년
-              </option>
-            ))}
-          </select>
-          <select
-            value={endMonth}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              setEndMonth(Number(e.target.value))
-            }
-            className="rounded border bg-background px-2 py-1 text-sm"
-          >
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m}>
-                {m}월
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* 필터: 검색창 오른쪽에 배치 */}
+        <div className="flex flex-1 flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm">기간</span>
+            <select
+              value={startYear}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setStartYear(Number(e.target.value))
+              }
+              className="rounded border bg-background px-2 py-1 text-sm"
+            >
+              {[2024, 2025].map((y) => (
+                <option key={y} value={y}>
+                  {y}년
+                </option>
+              ))}
+            </select>
+            <select
+              value={startMonth}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setStartMonth(Number(e.target.value))
+              }
+              className="rounded border bg-background px-2 py-1 text-sm"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>
+                  {m}월
+                </option>
+              ))}
+            </select>
+            <span className="text-muted-foreground">~</span>
+            <select
+              value={endYear}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setEndYear(Number(e.target.value))
+              }
+              className="rounded border bg-background px-2 py-1 text-sm"
+            >
+              {[2024, 2025].map((y) => (
+                <option key={y} value={y}>
+                  {y}년
+                </option>
+              ))}
+            </select>
+            <select
+              value={endMonth}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setEndMonth(Number(e.target.value))
+              }
+              className="rounded border bg-background px-2 py-1 text-sm"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>
+                  {m}월
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">이벤트</span>
-          <select
-            value={selectedEvent ?? ""}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
-              const v = e.target.value;
-              setSelectedEvent(v || null);
-            }}
-            className="rounded border bg-background px-2 py-1 text-sm"
-          >
-            <option value="">전체</option>
-            {EVENT_NAMES.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* 충전 유형 필터 UI는 제거 (serviceTypeFilter는 자동완성 필터에만 사용) */}
-
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleApplyFilters}
-            className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            적용
-          </button>
-          <button
-            type="button"
-            onClick={handleResetFilters}
-            disabled={!hasActiveFilters}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-medium",
-              !hasActiveFilters && "cursor-not-allowed opacity-50",
-            )}
-          >
-            초기화
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">이벤트</span>
+            <select
+              value={selectedEvent ?? ""}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                const v = e.target.value;
+                setSelectedEvent(v || null);
+              }}
+              disabled={!selectedHospital}
+              className={cn(
+                "rounded border bg-background px-2 py-1 text-sm",
+                !selectedHospital && "cursor-not-allowed opacity-50",
+              )}
+            >
+              <option value="">전체</option>
+              {eventOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* Selected hospital + active filter summary */}
-      {selectedHospital && (
+      {/* Step 3: [조회] [초기화] 액션 바 (필터 div 밖) */}
+      <div className="mt-2 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={handleFetch}
+          disabled={!selectedHospital || isLoading}
+          className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          조회
+        </button>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted"
+        >
+          초기화
+        </button>
+      </div>
+
+      {/* 선택된 병원 라벨 + 적용된 필터 요약 (조회 후에만 필터 요약 표시) */}
+      {selectedHospital && hasFetched && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -618,7 +653,7 @@ export default function DashBoard() {
             {selectedHospital.name} | {selectedHospital.subject} |{" "}
             {selectedHospital.location}
           </span>
-          {activeFilterLabel && (
+          {hasFetched && activeFilterLabel && (
             <span className="text-xs text-muted-foreground">
               · {activeFilterLabel}
             </span>
@@ -626,8 +661,8 @@ export default function DashBoard() {
         </motion.div>
       )}
 
-      {/* Summary Cards */}
-      {selectedHospital && (
+      {/* Summary Cards — 조회 성공 후에만 */}
+      {hasFetched && !isLoading && selectedHospital && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -664,28 +699,45 @@ export default function DashBoard() {
         </motion.div>
       )}
 
-      {/* No results / Welcome */}
-      {!selectedHospital && (
+      {/* Welcome: 병원 미선택 */}
+      {!hasFetched && (
         <div className="rounded-lg border border-dashed bg-muted/20 p-12 text-center">
           <Building2 className="mx-auto h-12 w-12 text-muted-foreground" />
-          <p className="mt-2 text-sm font-medium">병원을 검색해 선택하세요</p>
+          <p className="mt-2 text-sm font-medium">
+            병원과 필터를 선택한 후 조회 버튼을 눌러 주세요
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            검색 후 병원을 선택하면 상세 분석 테이블이 표시됩니다.
+            검색에서 병원을 선택하고, 기간·이벤트를 설정한 뒤 조회를 누르면 상세
+            분석이 표시됩니다.
           </p>
         </div>
       )}
 
-      {noResults && selectedHospital && (
+      {noResults && (
         <div className="rounded-lg border bg-muted/30 p-8 text-center">
           <p className="text-sm font-medium">조건에 맞는 데이터가 없습니다.</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            기간 또는 이벤트 필터를 변경해 보세요.
+            기간 또는 이벤트 필터를 변경한 뒤 다시 조회해 보세요.
           </p>
         </div>
       )}
 
-      {/* Excel-style Table */}
-      {selectedHospital && tableRows.length > 0 && (
+      {/* 테이블 영역: 로딩 시 스켈레톤만, 조회 후 데이터 테이블 */}
+      {isLoading && (
+        <div className="overflow-hidden rounded-lg border">
+          <div className="animate-pulse space-y-3 bg-muted/20 p-6">
+            <div className="h-4 w-full rounded bg-muted" />
+            <div className="h-4 w-3/4 rounded bg-muted" />
+            <div className="h-4 w-5/6 rounded bg-muted" />
+            <div className="h-4 w-4/5 rounded bg-muted" />
+            <div className="h-4 w-full rounded bg-muted" />
+            <div className="h-4 w-2/3 rounded bg-muted" />
+          </div>
+        </div>
+      )}
+
+      {/* Excel-style Table — 조회 후에만 */}
+      {hasFetched && !isLoading && tableRows.length > 0 && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

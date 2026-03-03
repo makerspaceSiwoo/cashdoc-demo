@@ -2,41 +2,44 @@
  * 대시보드 Mock 데이터
  *
  * 사용처:
- * - /dashboard (DashBoard): 검색 자동완성, 선택 병원별 테이블/요약 카드
- * - 새 병원 추가 시: MOCK_HOSPITALS에 항목 추가, 필요 시 HOSPITAL_MULTIPLIERS에 배수 추가
+ * - /dashboard (DashBoard): 검색 자동완성, 선택 병원별 이벤트 필터 옵션, 테이블/요약 카드
+ * - 병원별 고유 이벤트: HOSPITAL_EVENTS[hospitalId] → 이벤트 필터 옵션 및 데이터 생성에 사용
  */
 
 import type { EventRecord, Hospital } from "../types";
 
 // ---------------------------------------------------------------------------
-// 이벤트 목록
+// 병원별 고유 이벤트 (이벤트 필터 옵션 및 해당 병원 데이터 생성에만 사용)
 // ---------------------------------------------------------------------------
 /**
  * 사용처: DashBoard
- * - 필터 영역 "이벤트" select 옵션 목록 (기간/이벤트 필터)
- * - 병원별 월별 데이터 생성 시, 해당 월에 노출할 이벤트 이름 풀
+ * - 선택된 병원의 "이벤트" 필터 select 옵션 (병원 선택 시에만 활성화, 해당 병원 전용 이벤트만 표시)
+ * - getMockEventData(): 해당 병원의 월별 EventRecord 생성 시 이 이름들만 사용
  */
-export const EVENT_NAMES = [
-  "사각턱 보톡스",
-  "입술 필러",
-  "슈링크",
-  "인모드",
-  "울세라",
-  "스킨보톡스",
-  "쌍꺼풀 수술",
-  "지방흡입",
-] as const;
+export const HOSPITAL_EVENTS: Record<string, readonly string[]> = {
+  A: ["스킨보톡스", "지방흡입", "쌍꺼풀 수술"],
+  B: ["슈링크", "인모드", "울세라"],
+  C: ["물광주사", "필러", "여드름 압출"],
+  D: ["사각턱 보톡스", "입술 필러", "스킨보톡스"],
+  E: ["슈링크", "인모드", "울세라"],
+} as const;
+
+/**
+ * 선택된 병원의 이벤트 목록 반환 (이벤트 필터 옵션용).
+ * 사용처: DashBoard — 이벤트 select 옵션 목록
+ */
+export function getEventsForHospital(hospitalId: string): string[] {
+  return [...(HOSPITAL_EVENTS[hospitalId] ?? [])];
+}
 
 // ---------------------------------------------------------------------------
 // 병원 목록
 // ---------------------------------------------------------------------------
 /**
  * 사용처: DashBoard
- * - 검색창: 자동완성 후보(이름/진료과/지역), 즐겨찾기·최근 검색 목록
- * - 병원 선택 시: 상단 칩(이름 | 진료과 | 지역), serviceType "paid"면 파란 "유료" 뱃지
- * - getMockEventData(hospitalId)로 해당 병원의 테이블용 이벤트 데이터 조회
- *
- * 새 병원 추가: 아래 배열에 객체 추가, id는 고유값. 같은 이름(예: 하얀나라 피부과)은 location으로 구분.
+ * - 검색창 자동완성, 즐겨찾기·최근 검색
+ * - 병원 선택 시 상단 칩(이름 | 진료과 | 지역), serviceType "paid"면 "유료" 뱃지
+ * - getMockEventData(hospitalId)로 해당 병원 테이블 데이터 조회
  */
 export const MOCK_HOSPITALS: Hospital[] = [
   {
@@ -76,11 +79,6 @@ export const MOCK_HOSPITALS: Hospital[] = [
   },
 ];
 
-/**
- * 병원별 수치 배수 (테이블 mock 규모 조정용).
- * 사용처: getMockEventData 내부 — 선택된 병원의 월별 EventRecord 생성 시 적용.
- * 새 병원 추가 시 여기에 id를 키로 한 배수를 넣으면 됨. 없으면 1 사용.
- */
 const HOSPITAL_MULTIPLIERS: Record<string, number> = {
   A: 1.2,
   B: 1,
@@ -90,7 +88,7 @@ const HOSPITAL_MULTIPLIERS: Record<string, number> = {
 };
 
 // ---------------------------------------------------------------------------
-// 병원별 이벤트 데이터 생성
+// 병원별 이벤트 데이터 생성 (해당 병원의 HOSPITAL_EVENTS만 사용)
 // ---------------------------------------------------------------------------
 
 function buildEventRecords(
@@ -99,16 +97,19 @@ function buildEventRecords(
   month: number,
   baseMultiplier: number,
 ): EventRecord[] {
+  const eventNames = HOSPITAL_EVENTS[hospitalId];
+  if (!eventNames || eventNames.length === 0) return [];
+
   const seed = (hospitalId.charCodeAt(0) + year * 12 + month) % 100;
-  const count = 2 + (seed % 2);
+  const count = Math.min(2 + (seed % 2), eventNames.length);
   const indices: number[] = [];
   for (let i = 0; i < count; i++) {
-    const idx = (seed + i * 3) % EVENT_NAMES.length;
+    const idx = (seed + i * 3) % eventNames.length;
     if (!indices.includes(idx)) indices.push(idx);
   }
 
   return indices.map((idx) => {
-    const eventName = EVENT_NAMES[idx];
+    const eventName = eventNames[idx];
     const d = 50 + ((seed + idx * 7) % 150);
     const b = Math.floor(d * (0.03 + (seed % 15) / 100));
     const v = Math.floor(b * (0.6 + (seed % 10) / 100));
@@ -131,9 +132,8 @@ function buildEventRecords(
 }
 
 /**
- * 사용처: DashBoard
- * - 병원 선택(검색 Enter / 즐겨찾기·최근·자동완성 클릭) 시 호출
- * - 반환값: baseRecords / viewRecords로 저장 → 요약 카드 4종, 기간·이벤트 필터 후 테이블(년/월/이벤트, 전달·예약·방문·예약률·내원율), 테이블 하단 "전체 소계" 행에 사용
+ * 사용처: DashBoard — "조회" 버튼 클릭 시에만 호출
+ * 반환값: baseRecords/viewRecords → 요약 카드, 기간·이벤트 필터 후 테이블
  */
 export function getMockEventData(hospitalId: string): EventRecord[] {
   const mult = HOSPITAL_MULTIPLIERS[hospitalId] ?? 1;
